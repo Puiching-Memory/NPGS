@@ -12,6 +12,7 @@
 #include "Engine/Core/Base/Config/EngineConfig.h"
 #include "Engine/Core/Math/NumericConstants.h"
 #include "Engine/Core/Runtime/AssetLoaders/AssetManager.h"
+#include "Engine/Core/Runtime/AssetLoaders/GetAssetFullPath.h"
 #include "Engine/Core/Runtime/AssetLoaders/Shader.h"
 #include "Engine/Core/Runtime/AssetLoaders/Texture.h"
 #include "Engine/Core/Runtime/Graphics/Renderers/PipelineManager.h"
@@ -1165,7 +1166,7 @@ void FApplication::ExecuteMainRender()
         "stage4", TextureAllocationCreateInfo, "stage4.png", vk::Format::eR8G8B8A8Unorm,
         vk::Format::eR8G8B8A8Unorm, vk::ImageCreateFlags(), false, false);
     // ================= [新增] 动态加载 Disk 文件夹下的所有图片 =================
-    std::string diskPath = "Assets/Textures/Disk";
+    std::string diskPath = Runtime::Asset::GetAssetFullPath(Runtime::Asset::EAssetType::kTexture, "Disk");
     if (std::filesystem::exists(diskPath))
     {
         for (const auto& entry : std::filesystem::directory_iterator(diskPath))
@@ -3073,7 +3074,7 @@ bool FApplication::InitializeWindow()
     }
     _VulkanContext->SetSurface(Surface);
 
-    if (_VulkanContext->CreateDevice(0) != vk::Result::eSuccess ||
+    if (_VulkanContext->CreateDevice() != vk::Result::eSuccess ||
         _VulkanContext->CreateSwapchain(_WindowSize, _bEnableVSync) != vk::Result::eSuccess)
     {
         return false;

@@ -1,4 +1,5 @@
 #include "GameScreen.h"
+#include "Engine/Core/Runtime/AssetLoaders/GetAssetFullPath.h"
 #include "../ScreenManager.h"
 #include "../../../../../Program/Application.h" // For context types
 #include "Engine/Core/Runtime/AssetLoaders/AssetManager.h"
@@ -83,7 +84,8 @@ void GameScreen::OnEnter()
 {
     // --- 1. 从JSON加载UI骨架 ---
     UILoader loader;
-    m_ui_root = loader.LoadFromFile("Assets/UI/game_screen.json");
+    m_ui_root = loader.LoadFromFile(Runtime::Asset::GetAssetFullPath(
+        Runtime::Asset::EAssetType::kUI, "game_screen.json"));
 
     if (!m_ui_root)
     {

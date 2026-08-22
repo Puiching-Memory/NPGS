@@ -1,4 +1,5 @@
 #include "I18nManager.h"
+#include "Engine/Core/Runtime/AssetLoaders/GetAssetFullPath.h"
 #include <fstream>
 #include "nlohmann/json.hpp" // 引入 nlohmann::json 库
 
@@ -65,7 +66,8 @@ I18nManager::I18nManager()
 void I18nManager::LoadAvailableLanguages()
 {
     m_available_languages.clear();
-    const std::string filename = "Assets/Lang/translations.json";
+    const std::string filename = Runtime::Asset::GetAssetFullPath(
+        Runtime::Asset::EAssetType::kLanguage, "translations.json");
     std::ifstream ifs(filename);
     if (!ifs.is_open()) return;
 
@@ -153,7 +155,8 @@ void I18nManager::LoadDictionary()
 
     if (lang_code.empty()) return;
 
-    const std::string filename = "Assets/Lang/translations.json";
+    const std::string filename = Runtime::Asset::GetAssetFullPath(
+        Runtime::Asset::EAssetType::kLanguage, "translations.json");
     std::ifstream ifs(filename);
     if (!ifs.is_open())
     {

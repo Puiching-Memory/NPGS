@@ -1,4 +1,5 @@
 #include "MainMenuScreen.h"
+#include "Engine/Core/Runtime/AssetLoaders/GetAssetFullPath.h"
 #include "../ScreenManager.h"
 #include "../../../../../Program/Application.h"
 #include "../UILoader.h"
@@ -62,7 +63,8 @@ void MainMenuScreen::OnEnter()
     });
 
     // 3. 加载UI树
-    m_ui_root = loader.LoadFromFile("Assets/UI/main_menu.json");
+    m_ui_root = loader.LoadFromFile(Runtime::Asset::GetAssetFullPath(
+        Runtime::Asset::EAssetType::kUI, "main_menu.json"));
     if (!m_ui_root)
     {
         m_ui_root = std::make_shared<UIRoot>();

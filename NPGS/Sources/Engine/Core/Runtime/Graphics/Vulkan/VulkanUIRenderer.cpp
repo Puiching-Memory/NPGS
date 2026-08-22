@@ -1,5 +1,6 @@
 // VulkanUIRenderer.cpp - 修正字体上传部分
 #include "VulkanUIRenderer.h"
+#include "Engine/Core/Runtime/AssetLoaders/GetAssetFullPath.h"
 #include "Engine/Core/System/UI/ui_framework.h"
 #include "Engine/Utils/Logger.h"
 
@@ -36,9 +37,9 @@ bool FVulkanUIRenderer::Initialize(GLFWwindow* window)
     // ================= [字体加载核心修改 START] =================
      // --- A. 定义字体文件路径 ---
     // 请确保这些文件真实存在于你的 Assets/Fonts/ 目录下
-    const char* enFontPath = "Assets/Fonts/Anonymous-Pro-B-1.ttf"; // 英文 (基础)
-    const char* cnFontPath = "Assets/Fonts/msyhbd.ttc";              // 中文 (微软雅黑)
-    const char* symFontPath = "Assets/Fonts/seguisym.ttf";          // 符号 (Segoe UI Symbol)
+    const std::string enFontPath = Asset::GetAssetFullPath(Asset::EAssetType::kFont, "Anonymous-Pro-B-1.ttf");
+    const std::string cnFontPath = Asset::GetAssetFullPath(Asset::EAssetType::kFont, "msyhbd.ttc");
+    const std::string symFontPath = Asset::GetAssetFullPath(Asset::EAssetType::kFont, "seguisym.ttf");
 
     // --- B. 定义特殊符号的字形范围 ---
     // 覆盖: 标点, 箭头, 数学符号, 技术符号, 圈号字符, 制表符, 方块元素, 几何图形, 杂项符号
@@ -63,7 +64,7 @@ bool FVulkanUIRenderer::Initialize(GLFWwindow* window)
         config.PixelSnapH = true; // 像素对齐，防止字体模糊
         // 1. 加载英文字体 (Base)
         ImFont* font = io.Fonts->AddFontFromFileTTF(
-            enFontPath,
+            enFontPath.c_str(),
             size,
             nullptr,
             io.Fonts->GetGlyphRangesDefault()
@@ -81,7 +82,7 @@ bool FVulkanUIRenderer::Initialize(GLFWwindow* window)
 
         // 3. 加载中文字体 (Merge)
         ImFont* chineseFont = io.Fonts->AddFontFromFileTTF(
-            cnFontPath,
+            cnFontPath.c_str(),
             size+1.0f, // 保持和英文一样的大小
             &config,
             io.Fonts->GetGlyphRangesChineseFull() // 常用汉字范围
@@ -92,7 +93,7 @@ bool FVulkanUIRenderer::Initialize(GLFWwindow* window)
         config.GlyphOffset.y = 0.0f; // 符号通常不需要额外偏移
 
         ImFont* symFont = io.Fonts->AddFontFromFileTTF(
-            symFontPath,
+            symFontPath.c_str(),
             size * 1.0f,
             &config,
             symbolRanges // 使用我们在 B 步骤定义的宽范围

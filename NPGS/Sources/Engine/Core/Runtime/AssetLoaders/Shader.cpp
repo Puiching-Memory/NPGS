@@ -7,6 +7,7 @@
 #include <fstream>
 #include <ios>
 #include <set>
+#include <stdexcept>
 #include <utility>
 
 #include <spirv_cross/spirv_reflect.hpp>
@@ -514,6 +515,8 @@ void FShader::CreateDescriptors()
     {
         for (const auto& Binding : Bindings)
         {
+            const std::uint32_t DescriptorCount =
+                Binding.descriptorCount * Config::Graphics::kMaxFrameInFlight;
             auto it = std::find_if(PoolSizes.begin(), PoolSizes.end(), [&Binding](const vk::DescriptorPoolSize& Size) -> bool
             {
                 return Size.type == Binding.descriptorType;
@@ -521,11 +524,11 @@ void FShader::CreateDescriptors()
 
             if (it != PoolSizes.end())
             {
-                it->descriptorCount += Config::Graphics::kMaxFrameInFlight;
+                it->descriptorCount += DescriptorCount;
             }
             else
             {
-                PoolSizes.emplace_back(Binding.descriptorType, Config::Graphics::kMaxFrameInFlight);
+                PoolSizes.emplace_back(Binding.descriptorType, DescriptorCount);
             }
         }
     }
@@ -535,12 +538,20 @@ void FShader::CreateDescriptors()
 
     vk::DescriptorPoolCreateInfo PoolCreateInfo({}, MaxSets, PoolSizes);
     _DescriptorPool = std::make_unique<Graphics::FVulkanDescriptorPool>(PoolCreateInfo);
+    if (_DescriptorPool->GetStatus() != vk::Result::eSuccess || !_DescriptorPool->IsValid())
+    {
+        throw std::runtime_error("Failed to create shader descriptor pool.");
+    }
 
     for (const auto& [Set, Layout] : _DescriptorSetLayoutsMap)
     {
         std::vector<Graphics::FVulkanDescriptorSet> Sets(Config::Graphics::kMaxFrameInFlight);
         std::vector<vk::DescriptorSetLayout> Layouts(Config::Graphics::kMaxFrameInFlight, *Layout);
-        _DescriptorPool->AllocateSets(Layouts, Sets);
+        if (const vk::Result Result = _DescriptorPool->AllocateSets(Layouts, Sets); Result != vk::Result::eSuccess)
+        {
+            NpgsCoreError("Failed to allocate descriptor sets for set {}.", Set);
+            throw std::runtime_error("Failed to allocate shader descriptor sets for set " + std::to_string(Set) + ".");
+        }
 
         NpgsCoreTrace("Allocated {} descriptor sets for set {}", Sets.size(), Set);
         _DescriptorSetsMap[Set] = std::move(Sets);

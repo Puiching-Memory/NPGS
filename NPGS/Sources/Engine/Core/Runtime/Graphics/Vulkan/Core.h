@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -25,6 +26,8 @@ private:
     };
 
 public:
+    static constexpr std::uint32_t kAutoSelectPhysicalDevice = std::numeric_limits<std::uint32_t>::max();
+
     void AddCreateDeviceCallback(const std::string& Name, const std::function<void()>& Callback);
     void AddDestroyDeviceCallback(const std::string& Name, const std::function<void()>& Callback);
     void AddCreateSwapchainCallback(const std::string& Name, const std::function<void()>& Callback);

@@ -1,8 +1,16 @@
+#if defined(__linux__)
+#   define _GNU_SOURCE
+#endif
 #include "ThreadPool.h"
 
 #include <cstdint>
 #include <cstdlib>
-#include <Windows.h>
+
+#if defined(_WIN32)
+#   include <Windows.h>
+#elif defined(__linux__)
+#   include <pthread.h>
+#endif
 
 _NPGS_BEGIN
 _RUNTIME_BEGIN
@@ -12,6 +20,7 @@ namespace
 {
     int GetPhysicalCoreCount()
     {
+#if defined(_WIN32)
         DWORD Length = 0;
         GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &Length);
         std::vector<std::uint8_t> Buffer(Length);
@@ -32,6 +41,10 @@ namespace
         }
 
         return CoreCount;
+#else
+        const unsigned int Count = std::thread::hardware_concurrency();
+        return Count == 0 ? 1 : static_cast<int>(Count);
+#endif
     }
 }
 
@@ -40,6 +53,7 @@ namespace
 FThreadPool::FThreadPool()
     :
     _Terminate(false),
+    _kHyperThreadIndex(0),
     _kMaxThreadCount(GetPhysicalCoreCount()),
     _kPhysicalCoreCount(GetPhysicalCoreCount())
 {
@@ -99,10 +113,17 @@ FThreadPool* FThreadPool::GetInstance()
 
 void FThreadPool::SetThreadAffinity(std::thread& Thread, std::size_t CoreId) const
 {
+#if defined(_WIN32)
     HANDLE Handle = Thread.native_handle();
     DWORD_PTR Mask = 0;
     Mask = static_cast<DWORD_PTR>(Bit(CoreId * 2) + _kHyperThreadIndex);
     SetThreadAffinityMask(Handle, Mask);
+#elif defined(__linux__)
+    cpu_set_t CpuSet;
+    CPU_ZERO(&CpuSet);
+    CPU_SET(static_cast<int>(CoreId % _kPhysicalCoreCount), &CpuSet);
+    pthread_setaffinity_np(Thread.native_handle(), sizeof(CpuSet), &CpuSet);
+#endif
 }
 
 _THREAD_END

@@ -3,7 +3,10 @@
 #include <cstddef>
 
 #include <vulkan/vulkan.hpp>
-#include <vulkan/vulkan_to_string.hpp>
+// Vulkan-Hpp 1.3.283+ 才拆分出该头；旧版本内容在 vulkan.hpp 内
+#if __has_include(<vulkan/vulkan_to_string.hpp>)
+#   include <vulkan/vulkan_to_string.hpp>
+#endif
 #include "Engine/Core/Runtime/Graphics/Vulkan/Wrappers.h"
 
 _NPGS_BEGIN

@@ -20,6 +20,8 @@ void FLogger::Initialize()
     _kCoreLogger   = spdlog::stdout_color_mt("NPGS");
     _kClientLogger = spdlog::stdout_color_mt("App");
 
+#if defined(_WIN32)
+    // FOREGROUND_* 是 Win32 控制台颜色常量，仅 Windows 下有效
     auto ConsoleSink = dynamic_cast<spdlog::sinks::stdout_color_sink_mt*>(_kCoreLogger->sinks()[0].get());
     if (ConsoleSink)
     {
@@ -31,6 +33,7 @@ void FLogger::Initialize()
     {
         ConsoleSink->set_color(spdlog::level::trace, FOREGROUND_BLUE | FOREGROUND_INTENSITY);
     }
+#endif // _WIN32
 #elif defined(NPGS_ENABLE_FILE_LOGGER)
     _kCoreLogger   = spdlog::basic_logger_mt("NPGS", "NpgsCore.log", true);
     _kClientLogger = spdlog::basic_logger_mt("App",  "Npgs.log",     true);

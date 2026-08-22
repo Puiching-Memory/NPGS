@@ -5,7 +5,10 @@
 #include <limits>
 
 #include <vulkan/vulkan.hpp>
-#include <vulkan/vulkan_to_string.hpp>
+// Vulkan-Hpp 1.3.283+ 才拆分出该头；旧版本内容在 vulkan.hpp 内
+#if __has_include(<vulkan/vulkan_to_string.hpp>)
+#   include <vulkan/vulkan_to_string.hpp>
+#endif
 
 #include "Engine/Core/Runtime/Graphics/Vulkan/ExtFunctionsImpl.h"
 #include "Engine/Utils/Logger.h"
@@ -262,8 +265,121 @@ vk::Result FVulkanCore::CreateInstance(vk::InstanceCreateFlags Flags)
 
 vk::Result FVulkanCore::CreateDevice(std::uint32_t PhysicalDeviceIndex, vk::DeviceCreateFlags Flags)
 {
-    EnumeratePhysicalDevices();
-    DeterminePhysicalDevice(PhysicalDeviceIndex, true, true);
+    if (const vk::Result Result = EnumeratePhysicalDevices(); Result != vk::Result::eSuccess)
+    {
+        return Result;
+    }
+    if (_AvailablePhysicalDevices.empty())
+    {
+        NpgsCoreError("No Vulkan-capable physical devices were found.");
+        return vk::Result::eErrorInitializationFailed;
+    }
+
+    auto IsDeviceSuitable = [this](std::uint32_t Index) -> bool
+    {
+        const vk::PhysicalDevice Device = _AvailablePhysicalDevices[Index];
+        FQueueFamilyIndicesComplex Indices;
+        if (ObtainQueueFamilyIndices(Device, true, true, Indices) != vk::Result::eSuccess)
+        {
+            return false;
+        }
+
+        try
+        {
+            const std::vector<vk::ExtensionProperties> AvailableExtensions =
+                Device.enumerateDeviceExtensionProperties();
+            for (const char* RequiredExtension : _DeviceExtensions)
+            {
+                const bool bFound = std::any_of(
+                    AvailableExtensions.begin(), AvailableExtensions.end(),
+                    [RequiredExtension](const vk::ExtensionProperties& AvailableExtension)
+                    {
+                        return Util::Equal(RequiredExtension, AvailableExtension.extensionName);
+                    });
+                if (!bFound)
+                {
+                    return false;
+                }
+            }
+
+            if (_Surface &&
+                (Device.getSurfaceFormatsKHR(_Surface).empty() || Device.getSurfacePresentModesKHR(_Surface).empty()))
+            {
+                return false;
+            }
+        }
+        catch (const vk::SystemError& e)
+        {
+            NpgsCoreError("Failed to query physical device suitability: {}", e.what());
+            return false;
+        }
+
+        return true;
+    };
+
+    if (PhysicalDeviceIndex == kAutoSelectPhysicalDevice)
+    {
+        std::int64_t BestScore = -1;
+        std::uint32_t BestIndex = kAutoSelectPhysicalDevice;
+
+        for (std::uint32_t Index = 0; Index < _AvailablePhysicalDevices.size(); ++Index)
+        {
+            if (!IsDeviceSuitable(Index))
+            {
+                continue;
+            }
+
+            const vk::PhysicalDeviceProperties Properties = _AvailablePhysicalDevices[Index].getProperties();
+            std::int64_t Score = Properties.limits.maxImageDimension2D;
+            switch (Properties.deviceType)
+            {
+            case vk::PhysicalDeviceType::eDiscreteGpu:
+                Score += 100000;
+                break;
+            case vk::PhysicalDeviceType::eIntegratedGpu:
+                Score += 10000;
+                break;
+            case vk::PhysicalDeviceType::eVirtualGpu:
+                Score += 1000;
+                break;
+            default:
+                break;
+            }
+
+            NpgsCoreInfo("Vulkan device candidate {}: {} (score {}).", Index,
+                         Properties.deviceName.data(), Score);
+            if (Score > BestScore)
+            {
+                BestScore = Score;
+                BestIndex = Index;
+            }
+        }
+
+        if (BestIndex == kAutoSelectPhysicalDevice)
+        {
+            NpgsCoreError("No Vulkan physical device supports the required queues, presentation, and extensions.");
+            return vk::Result::eErrorFeatureNotPresent;
+        }
+        PhysicalDeviceIndex = BestIndex;
+    }
+    else if (PhysicalDeviceIndex >= _AvailablePhysicalDevices.size())
+    {
+        NpgsCoreError("Physical device index {} is out of range ({} devices available).",
+                      PhysicalDeviceIndex, _AvailablePhysicalDevices.size());
+        return vk::Result::eErrorInitializationFailed;
+    }
+    else if (!IsDeviceSuitable(PhysicalDeviceIndex))
+    {
+        NpgsCoreError("Physical device {} does not support the required queues, presentation, or extensions.",
+                      PhysicalDeviceIndex);
+        return vk::Result::eErrorFeatureNotPresent;
+    }
+
+    if (const vk::Result Result = DeterminePhysicalDevice(PhysicalDeviceIndex, true, true);
+        Result != vk::Result::eSuccess)
+    {
+        return Result;
+    }
 
     float QueuePriority = 1.0f;
     std::vector<vk::DeviceQueueCreateInfo> DeviceQueueCreateInfos;

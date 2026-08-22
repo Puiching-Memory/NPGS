@@ -24,7 +24,16 @@
 
 /** @file xstdafx.h
  *  This is an modified implementation for Visual Studio.
+ *  Cross-platform 修改：使用与编译器无关的 NPGS_CPP_STANDARD，
+ *  兼容 MSVC（_MSVC_LANG）与 GCC/Clang（__cplusplus）。
  */
+
+// 编译器无关的 C++ 标准版本号
+#if defined(_MSVC_LANG)
+#   define NPGS_CPP_STANDARD _MSVC_LANG
+#else
+#   define NPGS_CPP_STANDARD __cplusplus
+#endif
 
 // 17.4.1.2 Headers
 
@@ -48,7 +57,7 @@
 #include <cwchar>
 #include <cwctype>
 
-#if _MSVC_LANG >= 201103L
+#if NPGS_CPP_STANDARD >= 201103L
 #include <ccomplex>
 #include <cfenv>
 #include <cinttypes>
@@ -93,7 +102,7 @@
 #include <valarray>
 #include <vector>
 
-#if _MSVC_LANG >= 201103L
+#if NPGS_CPP_STANDARD >= 201103L
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -116,11 +125,11 @@
 #include <unordered_set>
 #endif
 
-#if _MSVC_LANG >= 201402L
+#if NPGS_CPP_STANDARD >= 201402L
 #include <shared_mutex>
 #endif
 
-#if _MSVC_LANG >= 201703L
+#if NPGS_CPP_STANDARD >= 201703L
 #include <any>
 #include <charconv>
 #include <execution>
@@ -131,7 +140,7 @@
 #include <variant>
 #endif
 
-#if _MSVC_LANG >= 202002L
+#if NPGS_CPP_STANDARD >= 202002L
 #include <barrier>
 #include <bit>
 #include <compare>
@@ -148,7 +157,8 @@
 #include <version>
 #endif
 
-#if _MSVC_LANG > 202002L
+// C++23 起（GCC 14/Clang 与 libstdc++/libc++ 的 C++23 模式为 202100L）
+#if NPGS_CPP_STANDARD >= 202100L
 #if __cpp_impl_coroutine
 # include <coroutine>
 #endif
@@ -165,7 +175,7 @@
 #include <stdfloat>
 #endif
 
-#if _MSVC_LANG > 202302L
+#if NPGS_CPP_STANDARD > 202302L
 #if __has_include(<text_encoding>)
 # include <text_encoding>
 #endif

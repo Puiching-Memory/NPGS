@@ -7,18 +7,33 @@
 #endif // _DEBUG
 
 #ifdef NPGS_ENABLE_ASSERT
+#include <cstdlib>
 #include <iostream>
-#include <Windows.h>
+#ifdef _WIN32
+#    include <Windows.h>
+#endif
 
 #define NpgsAssert(Expr, ...)                                                                                 \
 if (!(Expr))                                                                                                  \
 {                                                                                                             \
     std::cerr << "Assertion failed: " << #Expr << " in " << __FILE__ << " at line " << __LINE__ << std::endl; \
     std::cerr << "Message: " << __VA_ARGS__ << std::endl;                                                     \
-    DebugBreak();                                                                                             \
+    DebugBreakOrAbort();                                                                                      \
 }
 
 #define NpgsStaticAssert(Expr, ...) static_assert(Expr, __VA_ARGS__)
+
+#ifdef _WIN32
+inline void DebugBreakOrAbort()
+{
+    DebugBreak();
+}
+#else
+inline void DebugBreakOrAbort()
+{
+    std::abort();
+}
+#endif // _WIN32
 
 #else
 

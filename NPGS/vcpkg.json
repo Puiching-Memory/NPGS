@@ -1,4 +1,4 @@
-{
+﻿{
   "name": "npgs",
   "version": "1.0.0",
   "description": "Von-Neumann Probe in Galaxy Simulator",
@@ -21,7 +21,12 @@
     "magic-enum",
     "spdlog",
     "stb",
-    "nlohmann-json"
+    "nlohmann-json",
+    "vulkan",
+    "vulkan-hpp",
+    "vulkan-memory-allocator",
+    "spirv-cross",
+    "shaderc"
   ],
   "builtin-baseline": "782419385291ae2db643c928314efe626853c702"
 }
