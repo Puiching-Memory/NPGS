@@ -39,12 +39,13 @@ lensing, Doppler shift, gravitational redshift, and heat haze refraction.
 
 ### 前置要求
 
-依赖 **全部项目级**，系统上只需要编译器与显卡驱动（无需安装 vcpkg / Vulkan SDK / 任何开发库）：
+C/C++ 包依赖全部由项目级 vcpkg 管理；系统只需构建工具、显卡驱动，以及 Linux 上 GLFW 所需的 X11 开发头：
 
 | 依赖                                          | Windows                                               | Linux (Ubuntu/Debian)                                                                |
 | --------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | CMake ≥ 3.23                                  | 安装 CMake                                            | `sudo apt install cmake ninja-build`                                                 |
-| 编译器                                        | Visual Studio 2022（含 MSVC）                         | `sudo apt install g++`（**GCC ≥ 14**，C++23 `std::println` 需要）                    |
+| 编译器                                        | Visual Studio 2022 或 2026（含 MSVC）                 | `sudo apt install g++`（**GCC ≥ 14**，C++23 `std::println` 需要）                    |
+| Python ≥ 3.9                                  | 可使用仓库内嵌版本                                    | `sudo apt install python3`                                                           |
 | Vulkan 运行时                                 | 显卡驱动自带（NVIDIA/AMD/Intel 驱动含 Vulkan loader） | `sudo apt install mesa-vulkan-drivers`                                               |
 | X11 开发库（仅 Linux，vcpkg 构建 glfw3 需要） | —                                                     | `sudo apt install libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev` |
 
@@ -64,25 +65,33 @@ powershell -ExecutionPolicy Bypass -File scripts/bootstrap-vcpkg.ps1   # Windows
 ./scripts/bootstrap-vcpkg.sh                                            # Linux
 
 # 2. 配置
-cmake --preset windows-msvc        # Windows（VS 2022 多配置）
-cmake --preset linux-gcc-release   # Linux
+cmake --preset windows-msvc-vs2022 # Windows · VS 2022
+cmake --preset windows-msvc        # Windows · VS 2026
+cmake --preset linux-gcc-release   # Linux · GCC 14+
 
 # 3. 构建（会自动编译 GLSL 着色器到 NPGS/Assets/Shaders）
-cmake --build --preset windows-msvc-release   # Windows：Release 配置
-cmake --build --preset linux-gcc-release      # Linux
+cmake --build --preset windows-msvc-vs2022-release # Windows · VS 2022
+cmake --build --preset windows-msvc-release        # Windows · VS 2026
+cmake --build --preset linux-gcc-release           # Linux
 
-# 4. 运行（资源路径自动探测，可在任意目录运行）
+# 4. 测试
+ctest --test-dir build/windows-vs2022 -C Release --output-on-failure
+ctest --test-dir build/windows -C Release --output-on-failure
+ctest --test-dir build/linux-release --output-on-failure
+
+# 5. 运行（资源路径自动探测，可在任意目录运行）
+./build/windows-vs2022/bin/NPGS.exe
 ./build/windows/bin/NPGS.exe      # 以实际输出目录为准
 ./build/linux-release/bin/NPGS
 ```
 
 - 出包版本（文件日志，等价旧 VS 的 Package 配置）：先运行 `cmake --preset windows-msvc-package`，再运行 `cmake --build --preset windows-msvc-package-release`；完整产物位于 `build/windows-package/bin`。
-- 直接 `cmake -S . -B build`（不带 preset）时，CMake 也会把依赖装到 `NPGS/vcpkg_installed`；若希望完全离线运行，可先执行 bootstrap 脚本预装。
+- 标准归档包：完成 Package 构建后运行 `cpack --config build/windows-package/CPackConfig.cmake -C Release`；Linux 使用对应构建目录的 `CPackConfig.cmake`。归档包含可执行文件、运行库、Assets、LICENSE 与 README。
+- 直接配置时必须显式传入 vcpkg toolchain，例如：`cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=third_party/vcpkg/scripts/buildsystems/vcpkg.cmake`。
 - 资产根目录可通过环境变量 `NPGS_ASSET_ROOT` 显式指定（默认从可执行文件目录或当前目录向上查找 `Assets/`）。
 
-> 提示1：`NPGS/Assets/Shaders/*.spv` 不入库，首次构建时由 `Tools/ShaderCompiler/CompileShaders.py` 自动生成（glslc 由 shaderc port 提供）；若无 glslc 会跳过并在运行时提示缺着色器文件。
-> 提示2：`NPGS/vcpkg.json` 固定在 `builtin-baseline`；若某 port（如 vulkan-memory-allocator）不在该基线中，运行
-> `third_party/vcpkg/vcpkg x-update-baseline --add-initial-baseline` 或删除/替换 baseline 即可。
+> 提示1：`NPGS/Assets/Shaders/*.spv` 不入库，首次构建时由 `Tools/ShaderCompiler/CompileShaders.py` 自动生成（glslc 由 shaderc port 提供）；缺少 Python/glslc 或任一着色器编译失败都会终止构建。仅在明确不需要可运行产物时使用 `-DNPGS_BUILD_SHADERS=OFF`。
+> 提示2：bootstrap 脚本会将 vcpkg 本体与 ports 一起固定到 `NPGS/vcpkg.json` 的 `builtin-baseline`。更新依赖前请在独立分支运行 `vcpkg x-update-baseline`，并通过两平台 CI。
 > 提示3：如需清理，删除整个 `third_party/vcpkg`、`NPGS/vcpkg_installed` 与 `build/` 即可，不残留任何系统级安装。
 
 ---

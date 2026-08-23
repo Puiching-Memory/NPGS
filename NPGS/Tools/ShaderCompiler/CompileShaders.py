@@ -3,13 +3,14 @@
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from datetime import datetime
 import json
 
 # 在文件顶部添加一个新的函数
-def get_shader_hash(source_file: Path, macros: list[str] = None) -> str:
+def get_shader_hash(source_file: Path, macros: list[str] = None, dependency_files: set[Path] = None) -> str:
     """计算着色器及其配置的哈希值"""
     import hashlib
     
@@ -23,6 +24,15 @@ def get_shader_hash(source_file: Path, macros: list[str] = None) -> str:
     # 添加宏定义到哈希
     if macros:
         hasher.update(''.join(sorted(macros)).encode())
+
+    # 内容而不是时间戳参与哈希，保证切换分支、恢复旧时间戳后仍能正确重编译。
+    if dependency_files:
+        for dependency_file in sorted(dependency_files):
+            hasher.update(str(dependency_file).encode('utf-8'))
+            with open(dependency_file, 'rb') as f:
+                hasher.update(f.read())
+
+    hasher.update(GLSLC_IDENTITY.encode('utf-8'))
     
     return hasher.hexdigest()
 
@@ -104,6 +114,17 @@ def find_glslc() -> str:
 
 GLSLC_PATH = find_glslc()
 
+def get_glslc_identity() -> str:
+    try:
+        result = subprocess.run(
+            [GLSLC_PATH, '--version'], capture_output=True, text=True, check=True
+        )
+        return f"{GLSLC_PATH}\n{result.stdout}"
+    except Exception:
+        return GLSLC_PATH
+
+GLSLC_IDENTITY = get_glslc_identity()
+
 def parse_includes(shader_file: Path, included_files: set = None) -> set:
     """解析着色器文件中的所有 #include 指令"""
     if included_files is None:
@@ -134,23 +155,13 @@ def needs_recompile(source_file: Path, spv_file: Path, macros: list[str] = None)
         return True
     
     # 计算当前的哈希值
-    current_hash = get_shader_hash(source_file, macros)
+    included_files = parse_includes(source_file)
+    current_hash = get_shader_hash(source_file, macros, included_files)
     # 获取上次编译时的哈希值
     saved_hash = load_shader_hash(spv_file)
     
     # 如果哈希值不匹配，需要重新编译
     if current_hash != saved_hash:
-        return True
-    
-    # 检查所有包含的文件
-    try:
-        included_files = parse_includes(source_file)
-        target_time = spv_file.stat().st_mtime
-        for include_file in included_files:
-            if include_file.stat().st_mtime > target_time:
-                return True
-    except Exception as e:
-        print(f"警告: 检查依赖文件时出错 {source_file.name}: {str(e)}")
         return True
     
     return False
@@ -210,7 +221,8 @@ def compile_shader(source_file: Path, target_file: Path, macros: list[str] = Non
             return False
 
         # 保存编译配置的哈希值
-        save_shader_hash(target_file, get_shader_hash(source_file, macros))
+        included_files = parse_includes(source_file)
+        save_shader_hash(target_file, get_shader_hash(source_file, macros, included_files))
         print(f"生成 {target_file.name}")
         return True
     except Exception as e:
@@ -289,3 +301,4 @@ if __name__ == "__main__":
     
     print(f"========== 生成: {compiled} 成功，{failed} 失败，{skipped} 最新，0 已跳过 ==========")
     print(f"========== 生成 于 {datetime.now().strftime('%H:%M')} 完成，耗时 {elapsed_time:.3f} 秒 ==========")
+    sys.exit(1 if failed else 0)

@@ -17,13 +17,33 @@ VCPKG_DIR="$REPO_ROOT/third_party/vcpkg"
 CACHE_DIR="$VCPKG_DIR/downloads"
 MANIFEST="$REPO_ROOT/NPGS"
 INSTALL_DIR="$REPO_ROOT/NPGS/vcpkg_installed"
+VCPKG_REVISION="$(sed -nE 's/.*"builtin-baseline"[[:space:]]*:[[:space:]]*"([0-9a-f]{40})".*/\1/p' "$MANIFEST/vcpkg.json" | head -n 1)"
 
-echo "[1/4] 克隆 vcpkg -> $VCPKG_DIR"
-if [[ ! -x "$VCPKG_DIR/vcpkg" && ! -f "$VCPKG_DIR/bootstrap-vcpkg.sh" ]]; then
+if [[ ! "$VCPKG_REVISION" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "NPGS/vcpkg.json 缺少有效的 builtin-baseline，无法固定 vcpkg 版本" >&2
+    exit 1
+fi
+
+echo "[1/4] 获取 vcpkg -> $VCPKG_DIR"
+if [[ ! -d "$VCPKG_DIR/.git" ]]; then
+    if [[ -d "$VCPKG_DIR" && -n "$(ls -A "$VCPKG_DIR")" ]]; then
+        echo "$VCPKG_DIR 已存在但不是 Git 仓库，请先移走该目录后重试" >&2
+        exit 1
+    fi
     mkdir -p "$VCPKG_DIR"
-    git clone --depth 1 https://github.com/microsoft/vcpkg.git "$VCPKG_DIR"
+    git -C "$VCPKG_DIR" init
+    git -C "$VCPKG_DIR" remote add origin https://github.com/microsoft/vcpkg.git
 else
-    echo "已存在，跳过克隆"
+    git -C "$VCPKG_DIR" remote set-url origin https://github.com/microsoft/vcpkg.git
+fi
+
+CURRENT_REVISION="$(git -C "$VCPKG_DIR" rev-parse HEAD 2>/dev/null || true)"
+if [[ "$CURRENT_REVISION" != "$VCPKG_REVISION" ]]; then
+    echo "固定 vcpkg 到 $VCPKG_REVISION"
+    git -C "$VCPKG_DIR" fetch --depth 1 origin "$VCPKG_REVISION"
+    git -C "$VCPKG_DIR" checkout --detach FETCH_HEAD
+else
+    echo "vcpkg 已是固定版本 $VCPKG_REVISION"
 fi
 
 echo "[2/4] bootstrap vcpkg"

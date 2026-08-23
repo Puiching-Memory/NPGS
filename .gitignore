@@ -368,6 +368,9 @@ FodyWeavers.xsd
 
 # Built shaders
 *.spv
+*.bak
+*.orig
+* - 副本.*
 NPGS/Assets/Shaders
 NPGS/Tools/ShaderCompiler/ShaderMeta.json
 
@@ -394,7 +397,7 @@ vcpkg-manifest-install.log
 /NPGS/Screenshot_Batch_20260603_225633
 /NPGS/Screenshot_Batch_20260603_230205
 /NPGS/Screenshot_Batch_20260603_231534
-/NPGS/Sources/Engine/Shaders/BlackHole_common.glsl.txt
+*.glsl.txt
 /NPGS/Screenshot_Batch_20260629_174612
 /NPGS/Screenshot_Batch_20260630_010555
 /NPGS/Screenshot_Batch_20260708_234857
@@ -424,5 +427,5 @@ build-*/
 CMakeUserPresets.json
 *.user
 
-# vcpkg (project-local git submodule, registered via scripts/bootstrap-vcpkg.*)
-third_party/vcpkg/downloads/
+# vcpkg（由 scripts/bootstrap-vcpkg.* 按 vcpkg.json 的 baseline 拉取）
+/third_party/vcpkg/

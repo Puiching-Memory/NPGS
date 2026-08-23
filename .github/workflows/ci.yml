@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows · VS 2022 · Release
+            os: windows-2022
+            configure-preset: windows-msvc-vs2022
+            build-preset: windows-msvc-vs2022-release
+            build-dir: build/windows-vs2022
+          - name: Linux · GCC 14 · Release
+            os: ubuntu-24.04
+            configure-preset: linux-gcc-release
+            build-preset: linux-gcc-release
+            build-dir: build/linux-release
+
+    env:
+      VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/.cache/vcpkg-binaries,readwrite
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: |
+            third_party/vcpkg
+            NPGS/vcpkg_installed
+            .cache/vcpkg-binaries
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('NPGS/vcpkg.json') }}
+
+      - name: Bootstrap dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/bootstrap-vcpkg.ps1
+
+      - name: Bootstrap dependencies (Linux)
+        if: runner.os == 'Linux'
+        env:
+          CC: gcc-14
+          CXX: g++-14
+        run: ./scripts/bootstrap-vcpkg.sh x64-linux
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --preset "${{ matrix.configure-preset }}"
+
+      - name: Configure (Linux)
+        if: runner.os == 'Linux'
+        env:
+          CC: gcc-14
+          CXX: g++-14
+        run: cmake --preset "${{ matrix.configure-preset }}"
+
+      - name: Build
+        run: cmake --build --preset "${{ matrix.build-preset }}" --parallel
+
+      - name: Test
+        run: ctest --test-dir "${{ matrix.build-dir }}" -C Release --output-on-failure

@@ -21,24 +21,37 @@ $VcpkgDir   = Join-Path $RepoRoot "third_party\vcpkg"
 $CacheDir   = Join-Path $VcpkgDir "downloads"
 $Manifest   = Join-Path $RepoRoot "NPGS"
 $InstallDir = Join-Path $RepoRoot "NPGS\vcpkg_installed"
+$ManifestConfig = Get-Content (Join-Path $Manifest "vcpkg.json") -Raw | ConvertFrom-Json
+$VcpkgRevision = $ManifestConfig.'builtin-baseline'
+
+if ($VcpkgRevision -notmatch '^[0-9a-f]{40}$') {
+    throw "NPGS/vcpkg.json 缺少有效的 builtin-baseline，无法固定 vcpkg 版本"
+}
 
 Write-Host "[1/4] 获取 vcpkg -> $VcpkgDir" -ForegroundColor Cyan
-$SubmoduleOk = $false
-if (Test-Path (Join-Path $RepoRoot ".gitmodules")) {
-    Push-Location $RepoRoot
-    try {
-        git submodule update --init --recursive third_party/vcpkg
-        if ($LASTEXITCODE -eq 0) { $SubmoduleOk = $true }
-    } finally {
-        Pop-Location
+if (-not (Test-Path (Join-Path $VcpkgDir ".git"))) {
+    if ((Test-Path $VcpkgDir) -and (Get-ChildItem $VcpkgDir -Force | Select-Object -First 1)) {
+        throw "$VcpkgDir 已存在但不是 Git 仓库，请先移走该目录后重试"
     }
-}
-if (-not $SubmoduleOk -and -not (Test-Path (Join-Path $VcpkgDir "vcpkg.exe")) -and -not (Test-Path (Join-Path $VcpkgDir "vcpkg"))) {
     New-Item -ItemType Directory -Path $VcpkgDir -Force | Out-Null
-    git clone --depth 1 https://github.com/microsoft/vcpkg.git $VcpkgDir
-    if ($LASTEXITCODE -ne 0) { throw "git clone vcpkg 失败，请检查网络" }
+    git -C $VcpkgDir init
+    if ($LASTEXITCODE -ne 0) { throw "初始化 vcpkg 仓库失败" }
+    git -C $VcpkgDir remote add origin https://github.com/microsoft/vcpkg.git
+    if ($LASTEXITCODE -ne 0) { throw "配置 vcpkg 远程仓库失败" }
 } else {
-    Write-Host "已存在，跳过克隆"
+    git -C $VcpkgDir remote set-url origin https://github.com/microsoft/vcpkg.git
+    if ($LASTEXITCODE -ne 0) { throw "更新 vcpkg 远程仓库失败" }
+}
+
+$CurrentRevision = git -C $VcpkgDir rev-parse HEAD 2>$null
+if ($LASTEXITCODE -ne 0 -or $CurrentRevision -ne $VcpkgRevision) {
+    Write-Host "固定 vcpkg 到 $VcpkgRevision"
+    git -C $VcpkgDir fetch --depth 1 origin $VcpkgRevision
+    if ($LASTEXITCODE -ne 0) { throw "拉取固定版本的 vcpkg 失败，请检查网络" }
+    git -C $VcpkgDir checkout --detach FETCH_HEAD
+    if ($LASTEXITCODE -ne 0) { throw "切换到固定版本的 vcpkg 失败" }
+} else {
+    Write-Host "vcpkg 已是固定版本 $VcpkgRevision"
 }
 
 Write-Host "[2/4] bootstrap vcpkg" -ForegroundColor Cyan

@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.21)
 
+if(POLICY CMP0207)
+    cmake_policy(SET CMP0207 NEW)
+endif()
+
 project(NPGS VERSION 1.0.0 LANGUAGES C CXX)
+
+include(CTest)
 
 # ===============================================================
 # 全局设置
@@ -26,6 +32,10 @@ endforeach()
 
 # 打包模式（等价于旧 VS 工程的 Package 配置：文件日志、Release 强制内联）
 option(NPGS_PACKAGE "NPGS_PACKAGE 打包版本（文件日志，等价于旧的 Package 配置）" OFF)
+option(NPGS_BUILD_SHADERS "构建时将 GLSL 编译为 SPIR-V" ON)
+option(NPGS_ENABLE_WARNINGS "启用项目级编译器警告" ON)
+option(NPGS_WARNINGS_AS_ERRORS "将项目级编译器警告视为错误" OFF)
+option(NPGS_ENABLE_SANITIZERS "启用 AddressSanitizer 与 UndefinedBehaviorSanitizer" OFF)
 
 # ===============================================================
 # 第三方依赖
@@ -125,7 +135,7 @@ endif()
 # ===============================================================
 # NPGS 目标
 # ===============================================================
-set(NPGS_ENGINE_SOURCES
+set(NPGS_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/NPGS/Sources/Engine/Core/Runtime/AssetLoaders/AssetManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/NPGS/Sources/Engine/Core/Runtime/AssetLoaders/GetAssetFullPath.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/NPGS/Sources/Engine/Core/Runtime/AssetLoaders/Shader.cpp
@@ -180,14 +190,16 @@ set(NPGS_ENGINE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/NPGS/Sources/ExternalImpl/stb_impl.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/NPGS/Sources/ExternalImpl/vma_impl.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/NPGS/Sources/Program/Application.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/NPGS/Sources/Program/main.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/NPGS/Sources/Program/Universe.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/NPGS/Sources/stdafx.cpp
 )
 
-add_executable(NPGS ${NPGS_ENGINE_SOURCES})
+add_library(NPGSCore STATIC ${NPGS_CORE_SOURCES})
+add_library(NPGS::Core ALIAS NPGSCore)
+add_executable(NPGS
+    ${CMAKE_CURRENT_SOURCE_DIR}/NPGS/Sources/Program/main.cpp)
 
-target_include_directories(NPGS PRIVATE
+target_include_directories(NPGSCore PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/NPGS/Sources
     ${NPGS_VULKAN_INCLUDE_DIR}
     ${NPGS_GLM_INCLUDE_DIR}
@@ -201,24 +213,55 @@ target_include_directories(NPGS PRIVATE
     ${NPGS_VMA_INCLUDE_DIR}
 )
 
-# 预编译头（等价于旧工程的 /FI "stdafx.h"；CMake 自动为 MSVC /FI、GCC/Clang -include）
+# 预编译头仍按目标隔离，避免应用入口与核心库互相隐藏编译依赖。
+target_precompile_headers(NPGSCore PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/NPGS/Sources/stdafx.h")
 target_precompile_headers(NPGS PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/NPGS/Sources/stdafx.h")
 
-target_compile_definitions(NPGS PRIVATE
-    $<$<CONFIG:Debug>:_DEBUG>
-    $<$<BOOL:${NPGS_PACKAGE}>:_RELEASE>
-)
-if(MSVC)
-    target_compile_definitions(NPGS PRIVATE _CRT_SECURE_NO_WARNINGS)
-endif()
+function(npgs_configure_cpp_target TARGET_NAME)
+    target_compile_definitions(${TARGET_NAME} PRIVATE
+        $<$<CONFIG:Debug>:_DEBUG>
+        $<$<BOOL:${NPGS_PACKAGE}>:_RELEASE>
+    )
+    if(MSVC)
+        target_compile_definitions(${TARGET_NAME} PRIVATE _CRT_SECURE_NO_WARNINGS)
+        # /utf-8：源码含中文注释；/bigobj：大型翻译单元；/permissive-：标准一致性。
+        target_compile_options(${TARGET_NAME} PRIVATE /utf-8 /bigobj /permissive-)
+    endif()
 
-if(MSVC)
-    # /utf-8：源码含中文注释；/bigobj：Application.cpp 体积大；/permissive-：沿用旧工程 ConformanceMode
-    target_compile_options(NPGS PRIVATE /utf-8 /bigobj /permissive-)
-endif()
+    if(NPGS_ENABLE_WARNINGS)
+        if(MSVC)
+            target_compile_options(${TARGET_NAME} PRIVATE /W4)
+        else()
+            target_compile_options(${TARGET_NAME} PRIVATE -Wall -Wextra -Wpedantic)
+        endif()
+    endif()
 
-target_link_libraries(NPGS PRIVATE
+    if(NPGS_WARNINGS_AS_ERRORS)
+        if(MSVC)
+            target_compile_options(${TARGET_NAME} PRIVATE /WX)
+        else()
+            target_compile_options(${TARGET_NAME} PRIVATE -Werror)
+        endif()
+    endif()
+
+    if(NPGS_ENABLE_SANITIZERS)
+        if(MSVC)
+            target_compile_options(${TARGET_NAME} PRIVATE /fsanitize=address)
+        elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(${TARGET_NAME} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+            target_link_options(${TARGET_NAME} PRIVATE -fsanitize=address,undefined)
+        else()
+            message(FATAL_ERROR "当前编译器不支持 NPGS_ENABLE_SANITIZERS")
+        endif()
+    endif()
+endfunction()
+
+npgs_configure_cpp_target(NPGSCore)
+npgs_configure_cpp_target(NPGS)
+
+target_link_libraries(NPGSCore PUBLIC
     Vulkan::Vulkan
     Threads::Threads
     imgui::imgui
@@ -229,8 +272,9 @@ target_link_libraries(NPGS PRIVATE
     ${NPGS_SPIRV_CROSS_CORE}
 )
 if(TARGET glfw)
-    target_link_libraries(NPGS PRIVATE glfw)
+    target_link_libraries(NPGSCore PUBLIC glfw)
 endif()
+target_link_libraries(NPGS PRIVATE NPGS::Core)
 
 # Package 构建生成可脱离源码仓库运行的目录布局。
 if(NPGS_PACKAGE)
@@ -257,20 +301,26 @@ endif()
 # 着色器编译（GLSL -> SPIR-V）
 # Assets/Shaders 下的 .spv 不入库，需要在构建时生成
 # ===============================================================
-if(WIN32 AND NOT Python3_EXECUTABLE AND
-   EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/NPGS/Tools/ShaderCompiler/python-embed/python.exe")
-    set(Python3_EXECUTABLE
-        "${CMAKE_CURRENT_SOURCE_DIR}/NPGS/Tools/ShaderCompiler/python-embed/python.exe"
-        CACHE FILEPATH "Project-local Python interpreter")
-endif()
-find_package(Python3 COMPONENTS Interpreter QUIET)
-find_program(NPGS_GLSLC NAMES glslc glslc.exe
-    HINTS
-        ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/shaderc
-        ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/glslang)
-if(Python3_Interpreter_FOUND AND NPGS_GLSLC)
+if(NPGS_BUILD_SHADERS)
+    if(WIN32 AND NOT Python3_EXECUTABLE AND
+       EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/NPGS/Tools/ShaderCompiler/python-embed/python.exe")
+        set(Python3_EXECUTABLE
+            "${CMAKE_CURRENT_SOURCE_DIR}/NPGS/Tools/ShaderCompiler/python-embed/python.exe"
+            CACHE FILEPATH "Project-local Python interpreter")
+    endif()
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    find_program(NPGS_GLSLC NAMES glslc glslc.exe
+        HINTS
+            ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/shaderc
+            ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/glslang)
+    if(NOT NPGS_GLSLC)
+        message(FATAL_ERROR
+            "NPGS_BUILD_SHADERS=ON，但未找到 glslc。请先运行 scripts/bootstrap-vcpkg.*。")
+    endif()
+
     add_custom_target(npgs-shaders
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/NPGS/Tools/ShaderCompiler/CompileShaders.py"
+        COMMAND "${CMAKE_COMMAND}" -E env "NPGS_GLSLC=${NPGS_GLSLC}"
+                "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/NPGS/Tools/ShaderCompiler/CompileShaders.py"
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/NPGS/Tools/ShaderCompiler"
         USES_TERMINAL
         COMMENT "Compiling GLSL shaders (glslc)"
@@ -279,7 +329,62 @@ if(Python3_Interpreter_FOUND AND NPGS_GLSLC)
     add_dependencies(NPGS npgs-shaders)
     message(STATUS "着色器编译已启用：${NPGS_GLSLC}")
 else()
-    message(WARNING
-        "未找到 python3 / glslc，跳过着色器自动编译。\n"
-        "请手动运行: python NPGS/Tools/ShaderCompiler/CompileShaders.py")
+    message(WARNING "NPGS_BUILD_SHADERS=OFF：不会生成运行所需的 SPIR-V 着色器")
 endif()
+
+# ===============================================================
+# 测试
+# ===============================================================
+if(BUILD_TESTING)
+    if(NOT Python3_Interpreter_FOUND)
+        find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    endif()
+    add_test(
+        NAME npgs.shader_compiler
+        COMMAND "${Python3_EXECUTABLE}" -m unittest discover
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/tests/python"
+                -p "test_*.py"
+    )
+    set_tests_properties(npgs.shader_compiler PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(
+        NAME npgs.repository_hygiene
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_repository.py")
+    set_tests_properties(npgs.repository_hygiene PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+
+    add_executable(NPGSCoreTests
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp/CoreTests.cpp")
+    target_link_libraries(NPGSCoreTests PRIVATE NPGS::Core)
+    npgs_configure_cpp_target(NPGSCoreTests)
+    add_test(
+        NAME npgs.core
+        COMMAND NPGSCoreTests "${CMAKE_CURRENT_BINARY_DIR}/npgs-core-test.csv")
+endif()
+
+# ===============================================================
+# 安装与归档发布
+# ===============================================================
+include(GNUInstallDirs)
+install(TARGETS NPGS
+    RUNTIME_DEPENDENCIES
+        PRE_EXCLUDE_REGEXES "api-ms-.*" "ext-ms-.*"
+        POST_EXCLUDE_REGEXES ".*[Ss]ystem32/.*" "^/lib/.*" "^/usr/lib/.*"
+    RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/NPGS/Assets/"
+    DESTINATION "${CMAKE_INSTALL_BINDIR}/Assets")
+install(FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+    "${CMAKE_CURRENT_SOURCE_DIR}/README.md"
+    DESTINATION ".")
+
+set(CPACK_PACKAGE_NAME "NPGS")
+set(CPACK_PACKAGE_VENDOR "NPGS Contributors")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_FILE_NAME "NPGS-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+if(WIN32)
+    set(CPACK_GENERATOR "ZIP")
+else()
+    set(CPACK_GENERATOR "TGZ")
+endif()
+include(CPack)
