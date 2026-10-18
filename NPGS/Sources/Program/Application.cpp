@@ -59,10 +59,16 @@ FBlackHoleArgs BlackHoleArgs{};
 static double g_GeoState[20];
 static bool g_isOutgoing = false;
 static double g_UniverseSign = 1.0;
+
+double g_Q = 0.0; // 对应黑洞的电荷 (Electric Charge)
+double g_P = 0.0; // 对应黑洞的磁荷 (Magnetic Monopole)
 namespace GeodesicIntegrator
 {
+
 extern double g_ProperAcceleration[3];
 double g_ProperAcceleration[3] = { 0.0, 0.0, 0.0 };
+extern double g_CameraCharge;
+double g_CameraCharge = 0.0;
 extern double g_ProperTime;
 double g_ProperTime = 0.0;
 double GetIntermediateSign(const double StartX[4], const double CurrentX[4], double CurrentSign, double a)
@@ -122,7 +128,7 @@ void ComputeMetric(const double X[4], double a, double Q, double fade, double si
 }
 // 数值差分计算 Christoffel 符号
 // 解析计算 Kerr-Schild 度规的克氏符 (无数值差分，极其稳定且高效)
-void ComputeChristoffel(const double X[4], double a, double Q, double fade, double signR, bool isOut, double Gamma[4][4][4])
+void ComputeChristoffel(const double X[4], double a, double Q, double fade, double signR, bool isOut, double Gamma[4][4][4], double (*F_down)[4] = nullptr, double (*g_up_out)[4] = nullptr)
 {
     double x = X[0], y = X[1], z = X[2];
     double a2 = a * a;
@@ -226,6 +232,7 @@ void ComputeChristoffel(const double X[4], double a, double Q, double fade, doub
         for (int j = 0; j < 4; ++j)
         {
             g_up[i][j] = (i == j ? eta_up[i] : 0.0) - f * l_up[i] * l_up[j];
+            if (g_up_out) g_up_out[i][j] = g_up[i][j]; // [新增]：允许导出逆度规
         }
     }
 
@@ -262,12 +269,114 @@ void ComputeChristoffel(const double X[4], double a, double Q, double fade, doub
             }
         }
     }
+    // === [新增] 7. 顺风车计算 Kerr-Newman 电磁张量 (Faraday Tensor) ===
+    // === [修改] 7. 顺风车计算 Kerr-Newman 电磁张量 (包含电荷与磁荷的线性叠加) ===
+    if (F_down)
+    {
+        double F_unit_down[4][4];
+
+        // 1. 先计算出 "单位电荷 (Q=1)" 对应的矢量势 P_unit
+        double P_unit = -1.0 * r * r * r * D_inv * fade;
+        double dP_unit[4] = { 0.0 };
+
+        for (int k = 0; k < 3; ++k)
+        {
+            // \partial_k P_unit
+            double dN_P_k = -1.0 * 3.0 * r * r * dr[k];
+            double dD_k = 4.0 * r * r2 * dr[k];
+            if (k == 1) dD_k += 2.0 * a2 * y;
+            dP_unit[k] = (dN_P_k * D - (-1.0 * r * r * r) * dD_k) * D_inv * D_inv * fade;
+        }
+
+        for (int mu = 0; mu < 4; ++mu)
+        {
+            for (int nu = 0; nu < 4; ++nu)
+            {
+                // \partial_\mu A_\nu
+                double d_mu_A_nu = 0.0;
+                if (mu < 3) d_mu_A_nu = dP_unit[mu] * l_down[nu] + P_unit * dl_down[mu][nu];
+
+                // \partial_\nu A_\mu
+                double d_nu_A_mu = 0.0;
+                if (nu < 3) d_nu_A_mu = dP_unit[nu] * l_down[mu] + P_unit * dl_down[nu][mu];
+
+                // 单位电场张量: F^{(unit)}_{\mu\nu}
+                F_unit_down[mu][nu] = d_mu_A_nu - d_nu_A_mu;
+            }
+        }
+
+        // 2. 将单位电场张量升指标得到 F_unit^{\mu\nu} (为求 Hodge 对偶做准备)
+        double F_unit_up[4][4] = { 0.0 };
+        for (int mu = 0; mu < 4; ++mu)
+        {
+            for (int nu = 0; nu < 4; ++nu)
+            {
+                double sum = 0.0;
+                for (int alpha = 0; alpha < 4; ++alpha)
+                {
+                    for (int beta = 0; beta < 4; ++beta)
+                    {
+                        sum += g_up[mu][alpha] * g_up[nu][beta] * F_unit_down[alpha][beta];
+                    }
+                }
+                F_unit_up[mu][nu] = sum;
+            }
+        }
+
+        // 3. 计算 Hodge 对偶，得到 "单位磁单极子场" star_F_unit
+        // \star F_{\mu\nu} = 0.5 * \epsilon_{\mu\nu\rho\sigma} F_unit^{\rho\sigma}
+        double star_F_unit_down[4][4];
+        star_F_unit_down[0][1] = F_unit_up[2][3];
+        star_F_unit_down[0][2] = -F_unit_up[1][3];
+        star_F_unit_down[0][3] = F_unit_up[1][2];
+        star_F_unit_down[1][2] = F_unit_up[0][3];
+        star_F_unit_down[1][3] = -F_unit_up[0][2];
+        star_F_unit_down[2][3] = F_unit_up[0][1];
+
+        // 补全反对称矩阵的下三角与对角线
+        star_F_unit_down[1][0] = -star_F_unit_down[0][1];
+        star_F_unit_down[2][0] = -star_F_unit_down[0][2];
+        star_F_unit_down[3][0] = -star_F_unit_down[0][3];
+        star_F_unit_down[2][1] = -star_F_unit_down[1][2];
+        star_F_unit_down[3][1] = -star_F_unit_down[1][3];
+        star_F_unit_down[3][2] = -star_F_unit_down[2][3];
+
+        for (int i = 0; i < 4; ++i) star_F_unit_down[i][i] = 0.0;
+
+        // 4. 根据全局 Q 和 P 完美线性叠加，得到真正的电磁张量
+        for (int mu = 0; mu < 4; ++mu)
+        {
+            for (int nu = 0; nu < 4; ++nu)
+            {
+                F_down[mu][nu] = g_Q * F_unit_down[mu][nu] + g_P * star_F_unit_down[mu][nu];
+            }
+        }
+    }
 }
 void EvaluateDerivatives(const double Y[20], double a, double Q, double fade, double signR, bool isOut, double dY[20])
 {
     double Gamma[4][4][4];
-    ComputeChristoffel(Y, a, Q, fade, signR, isOut, Gamma);
+    double F_down[4][4]; // [新增]
+    double g_up[4][4];   // [新增]
+    // 传入指针以索取附加几何量
+    ComputeChristoffel(Y, a, Q, fade, signR, isOut, Gamma, F_down, g_up);
+
     for (int i = 0; i < 4; ++i) dY[i] = Y[4 + i]; // dx/dtau = u
+
+    // === [新增] 计算洛伦兹加速度 a_{Lorentz}^\mu = (q/m) F^\mu_{~~\nu} U^\nu ===
+    double a_Lorentz_up[4] = { 0.0 };
+    double a_Lorentz_down[4] = { 0.0 };
+    if (g_CameraCharge != 0.0)
+    {
+        for (int mu = 0; mu < 4; ++mu)
+            for (int nu = 0; nu < 4; ++nu)
+                a_Lorentz_down[mu] += g_CameraCharge * F_down[mu][nu] * Y[4 + nu];
+
+        for (int mu = 0; mu < 4; ++mu)
+            for (int nu = 0; nu < 4; ++nu)
+                a_Lorentz_up[mu] += g_up[mu][nu] * a_Lorentz_down[nu];
+    }
+
     for (int i = 0; i < 4; ++i)
     {
         double sum = 0;
@@ -275,15 +384,27 @@ void EvaluateDerivatives(const double Y[20], double a, double Q, double fade, do
             for (int nu = 0; nu < 4; ++nu)
                 sum -= Gamma[i][mu][nu] * Y[4 + mu] * Y[4 + nu];
 
-        // === [新增]：加入固有加速度(火箭推力) a^\mu = \sum a^k E_{(k)}^\mu ===
+        // === [修改]：同时应用引擎飞船推力(火箭) 和 洛伦兹力 ===
         sum += g_ProperAcceleration[0] * Y[8 + i] +
             g_ProperAcceleration[1] * Y[12 + i] +
-            g_ProperAcceleration[2] * Y[16 + i];
+            g_ProperAcceleration[2] * Y[16 + i] +
+            a_Lorentz_up[i];
         dY[4 + i] = sum;
     }
+
     for (int a_idx = 0; a_idx < 3; ++a_idx)
     { // 平移输运方程
         int offset = 8 + 4 * a_idx;
+
+        // === [新增]：广义 Fermi-Walker Transport 约束量 a \cdot E_{(a_idx)} ===
+        double a_dot_E = g_ProperAcceleration[a_idx]; // 推力在局部标架的天然投影
+        if (g_CameraCharge != 0.0)
+        {
+            // 加上洛伦兹力的标架投影部分
+            for (int mu = 0; mu < 4; ++mu)
+                a_dot_E += a_Lorentz_down[mu] * Y[offset + mu];
+        }
+
         for (int i = 0; i < 4; ++i)
         {
             double sum = 0;
@@ -291,8 +412,8 @@ void EvaluateDerivatives(const double Y[20], double a, double Q, double fade, do
                 for (int nu = 0; nu < 4; ++nu)
                     sum -= Gamma[i][mu][nu] * Y[4 + mu] * Y[offset + nu];
 
-            // === [新增]：Fermi-Walker Transport项 u^\mu a^{(k)} 保证空间基底始终与四维速度正交 ===
-            sum += Y[4 + i] * g_ProperAcceleration[a_idx];
+            // === [修改]：Fermi-Walker Transport 确保相机在任何加速度下绝对刚性非旋转正交 ===
+            sum += Y[4 + i] * a_dot_E;
             dY[offset + i] = sum;
         }
     }
@@ -660,6 +781,7 @@ FMatrices Matrices;
 FLightMaterial LightMaterial;
 float cfov = 80.0f;
 float camsmth = 1.0f;
+float qfm = 0.0f;
 _NPGS_BEGIN
 
 namespace Art = Runtime::Asset;
@@ -806,7 +928,7 @@ void FApplication::Command(const std::string& command)
                 g_GeoState[5] = vy;
                 g_GeoState[6] = vz;
                 double a = BlackHoleArgs.Spin * 0.5; // M = 0.5
-                double Q = BlackHoleArgs.Q * 0.5;
+                double Q = sqrt(pow(g_Q, 2.0) + pow(g_P, 2.0)) * 0.5;
 
                 // 强制要求解释为 ingoing kerrschild 系
                 g_isOutgoing = false;
@@ -1223,7 +1345,7 @@ void FApplication::ExecuteMainRender()
         .Fields = { "InverseCamRot;", "BlackHoleRelativePosRs", "BlackHoleRelativeDiskNormal","BlackHoleRelativeDiskTangen","CameraVelocity","ie1_up","ie1_up","ie2_up","ie3_up","iU_up",
                     "iCamDataCoordisOutgoing","DEBUG","Prepass","Whitehole","InWhichUniverse","Grid","EnableHeatHaze","EnableShadowCulling", "ObserverMode","Polarization","iUseImageDisk",
                     "Quality","UniverseSign",
-                     "BlackHoleTime","BlackHoleMassSol", "Spin","Q", "Mu", "AccretionRate","BackShiftMax","DensestarsurfaceR","DensestarBlackbodyIntensityExponent","DensestarRedShiftColorExponent","DensestarRedShiftIntensityExponent","DensestarBrightmut","InterRadiusRs", "OuterRadiusRs","ThinRs","Hopper", "Brightmut","Darkmut","Reddening","Saturation"
+                     "BlackHoleTime","BlackHoleMassSol", "Spin","Q2", "Mu", "AccretionRate","BackShiftMax","DensestarsurfaceR","DensestarBlackbodyIntensityExponent","DensestarRedShiftColorExponent","DensestarRedShiftIntensityExponent","DensestarBrightmut","InterRadiusRs", "OuterRadiusRs","ThinRs","Hopper", "Brightmut","Darkmut","Reddening","Saturation"
                      , "BlackbodyIntensityExponent","RedShiftColorExponent","RedShiftIntensityExponent","ImageRotationSpeed","PolarizationAngle","HeatHaze","BackgroundBrightmut","PhotonRingBoost","PhotonRingColorTempBoost","BoostRot","JetRedShiftIntensityExponent","JetBrightmut","JetSaturation","JetShiftMax","BlendWeight"},
         .Set = 0,
         .Binding = 1,
@@ -1675,7 +1797,7 @@ void FApplication::ExecuteMainRender()
                 BlackHoleArgs.Whitehole = task.MaxExtension;
                 BlackHoleArgs.InWhichUniverse = task.Universe;
                 BlackHoleArgs.Spin = task.a;
-                BlackHoleArgs.Q = task.Q;
+                BlackHoleArgs.Q2 = pow(task.Q,2.0);
                 BlackHoleArgs.ThinRs = task.ThinRs;
                 BlackHoleArgs.Hopper = task.Hopper;
                 BlackHoleArgs.UniverseSign = task.UniverseSign;
@@ -2065,7 +2187,7 @@ void FApplication::ExecuteMainRender()
                 BlackHoleArgs.BlackHoleTime = GameTime * kSpeedOfLight / Rs / kLightYearToMeter;
                 BlackHoleArgs.BlackHoleMassSol = 1.49e7f;
                 BlackHoleArgs.Spin = 0.998f;
-                BlackHoleArgs.Q = 0.0f;
+                BlackHoleArgs.Q2 =(pow(g_Q,2.0)+ pow(g_P, 2.0));
                 BlackHoleArgs.Mu = 1.0f;
                 BlackHoleArgs.AccretionRate = (1e-12);
                 BlackHoleArgs.BackShiftMax = 1.5f;
@@ -2167,7 +2289,7 @@ void FApplication::ExecuteMainRender()
                 BlackHoleArgs.BlackHoleRelativePosRs = glm::vec4(glm::vec3(_FreeCamera->GetViewMatrix() * glm::vec4(0.0f, 0.0f, -0.000f, 1.0f)) / Rs, 1.0);
                 BlackHoleArgs.BlackHoleRelativeDiskNormal = (glm::mat4_cast(_FreeCamera->GetOrientation()) * glm::vec4(0.0f, 1.0f, 0.0f, 0.0f));
                 BlackHoleArgs.BlackHoleRelativeDiskTangen = (glm::mat4_cast(_FreeCamera->GetOrientation()) * glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
-
+                BlackHoleArgs.Q2 = (pow(g_Q, 2.0) + pow(g_P, 2.0));
 
 
 
@@ -2231,7 +2353,7 @@ void FApplication::ExecuteMainRender()
                     double current_step = std::min(dtau_remaining, safe_dtau);
 
                     // 执行单步积分
-                    GeodesicIntegrator::StepRK4(current_step * dtau_sign, BlackHoleArgs.Spin * 0.5, BlackHoleArgs.Q * 0.5);
+                    GeodesicIntegrator::StepRK4(current_step * dtau_sign, BlackHoleArgs.Spin * 0.5, sqrt(pow(g_Q, 2.0) + pow(g_P, 2.0)) * 0.5);
                     GeodesicIntegrator::g_ProperTime += (current_step * dtau_sign);
                     dtau_remaining -= current_step;
                     step_count++;
@@ -2291,7 +2413,7 @@ void FApplication::ExecuteMainRender()
             // 2. 物理参数准备
             float M = 0.5f * Rs;
             float a = BlackHoleArgs.Spin * M;      // 物理自旋 a
-            float Q_phys = BlackHoleArgs.Q * M;    // 物理电荷 Q (注意量纲跟随M)
+            float Q_phys = sqrt(pow(g_Q, 2.0) + pow(g_P, 2.0)) * M;    // 物理电荷 Q (注意量纲跟随M)
             float a2 = a * a;
             float Q2 = Q_phys * Q_phys;
 
@@ -3102,7 +3224,7 @@ void FApplication::update()
 {
     _FreeCamera->SetRotationSmoothCoefficient(camsmth);
     _FreeCamera->ProcessTimeEvolution(_DeltaTime);
-
+    GeodesicIntegrator::g_CameraCharge = qfm;
     CurrentTime = glfwGetTime();
     _LastDeltaTime = _DeltaTime;
     _DeltaTime = CurrentTime - LastFrameTime;
@@ -3177,7 +3299,7 @@ void FApplication::DumpArgsToJson(const std::string& filepath)
     DUMP_B(BlackHoleTime);
     DUMP_B(BlackHoleMassSol);
     DUMP_B(Spin);
-    DUMP_B(Q);
+    DUMP_B(Q2);
     DUMP_B(Mu);
     DUMP_B(AccretionRate);
     DUMP_B(InterRadiusRs);
@@ -3449,7 +3571,7 @@ void FApplication::ProcessInput()
                 g_UniverseSign = BlackHoleArgs.UniverseSign;
                 GeodesicIntegrator::g_ProperTime = 0.0;
                 // 将位置和速度一起传入测地线积分器
-                GeodesicIntegrator::InitializeGeodesicState(pos, velo, BlackHoleArgs.Spin * 0.5, BlackHoleArgs.Q * 0.5);
+                GeodesicIntegrator::InitializeGeodesicState(pos, velo, BlackHoleArgs.Spin * 0.5, sqrt(pow(g_Q, 2.0) + pow(g_P, 2.0)) * 0.5);
             }
         }
         wasGDown = isGDown;
@@ -3725,7 +3847,7 @@ void FApplication::RenderDebugUI()
 
     float M = 0.5f; // 以 Rs 为单位，M 恒为 0.5
     float a = BlackHoleArgs.Spin * M;
-    float Q = BlackHoleArgs.Q * M;
+    float Q = sqrt(pow(g_Q, 2.0) + pow(g_P, 2.0)) * M;
     float a2 = a * a;
     float Q2 = Q * Q;
 
@@ -3938,7 +4060,7 @@ void FApplication::RenderDebugUI()
     ImGui::Text("x: %.4f | y: %.4f | z: %.4f (Rs)", camPos.x, camPos.y, camPos.z);
     float zenithAngleDeg = (glm::length(camPos) > 0.0f) ? glm::degrees(acosf(camPos.y / glm::length(camPos))) : 0.0f;
     ImGui::Text("Zenith Angle: %.4f", zenithAngleDeg);
-    ImGui::Text("Spin (a*): %.4f | Charge (Q*): %.4f", BlackHoleArgs.Spin, BlackHoleArgs.Q);
+    ImGui::Text("Spin (a*): %.4f | Charge (Q*): %.4f", BlackHoleArgs.Spin, sqrt(pow(g_Q, 2.0) + pow(g_P, 2.0)));
     ImGui::Text("Velocity: %.6f c", physical_speed);
 
     if (g_GeodesicMode)
@@ -4000,7 +4122,7 @@ void FApplication::RenderDebugUI()
             // 获取当前度规，用于计算内积
             double g_down[4][4], g_up[4][4], dummy_r;
             double a = BlackHoleArgs.Spin * 0.5;
-            double Q = BlackHoleArgs.Q * 0.5;
+            double Q = sqrt(pow(g_Q, 2.0) + pow(g_P, 2.0)) * 0.5;
             GeodesicIntegrator::ComputeMetric(g_GeoState, a, Q, 1.0, g_UniverseSign, g_isOutgoing, g_down, g_up, dummy_r);
 
             auto dot = [&](const double* A, const double* B)
